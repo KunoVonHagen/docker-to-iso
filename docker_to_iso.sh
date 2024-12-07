@@ -39,7 +39,6 @@ execute_with_logging() {
 
 # Parse options
 BUILD_KERNEL=false
-ISO_OUTPUT_PATH="bootable.iso"  # Default output path
 
 # First, check for flags
 while [[ $# -gt 0 ]]; do
@@ -86,7 +85,7 @@ if [ "$BUILD_KERNEL" = true ]; then
 fi
 
 # Build initramfs
-execute_with_logging "Building initramfs from Dockerfile..." "./build_initramfs.sh \"$DOCKERFILE_PATH\""
+execute_with_logging "Building initramfs from Dockerfile..." "./build_initramfs.sh $DOCKERFILE_PATH"
 echo "Initramfs build completed."
 
 # Test initramfs file
@@ -95,8 +94,9 @@ echo "Initramfs file test passed."
 
 # Build ISO
 if [ -n "$ISO_OUTPUT_PATH" ]; then
-    execute_with_logging "Building ISO with output path '$ISO_OUTPUT_PATH'..." "./build_iso.sh \"$ISO_OUTPUT_PATH\" bzImage initramfs.cpio.gz"
+    execute_with_logging "Building ISO with output path '$ISO_OUTPUT_PATH'..." "./build_iso.sh -o $ISO_OUTPUT_PATH bzImage initramfs.cpio.gz"
 else
+    ISO_OUTPUT_PATH="$(pwd)/bootable.iso"
     execute_with_logging "Building ISO with default output path 'bootable.iso'..." "./build_iso.sh bzImage initramfs.cpio.gz"
 fi
 echo "ISO build completed. Output saved to '$ISO_OUTPUT_PATH'."

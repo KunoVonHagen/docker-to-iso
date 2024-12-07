@@ -8,14 +8,17 @@ OUTPUT_FILE="$SCRIPT_DIR/initramfs.cpio.gz"
 
 # Display the help message
 show_help() {
-  echo "Usage: $0 [-o output_file] <Dockerfile>"
+  echo "Usage: $0 [-o output_file] <Dockerfile_path>"
   echo
-  echo "This script builds a Docker image from the provided Dockerfile, exports the container's"
+  echo "This script builds a Docker image from the specified Dockerfile, exports the container's"
   echo "filesystem, and packages it into a compressed initramfs (initrd) image."
   echo
   echo "Options:"
   echo "  -o <output_file>  Specify the output file name for the initramfs (default: initramfs.cpio.gz)"
   echo "  -h, --help         Display this help message"
+  echo
+  echo "The <Dockerfile_path> argument must include the build context as a parent directory."
+  echo "Example: ./mycontext/Dockerfile"
   echo
 }
 
@@ -30,7 +33,8 @@ while getopts "o:h-:" opt; do
       exit 0
       ;;
     *)
-      echo "Usage: $0 [-o output_file] <Dockerfile>"
+      echo "Invalid option or missing argument"
+      show_help
       exit 1
       ;;
   esac
@@ -39,9 +43,26 @@ done
 # Check if the Dockerfile path is provided as an argument
 shift $((OPTIND - 1))
 if [ -z "$1" ]; then
-    echo "Please provide the path to the Dockerfile."
+    echo "Error: Please provide the path to the Dockerfile."
+    show_help
     exit 1
 fi
+
+DOCKERFILE_PATH=$(readlink -f "$1")
+
+# Validate the resolved path
+if [ ! -f "$DOCKERFILE_PATH" ]; then
+    echo "Error: Dockerfile not found at $DOCKERFILE_PATH."
+    exit 1
+fi
+
+# Extract the build context and Dockerfile name
+BUILD_CONTEXT=$(dirname "$DOCKERFILE_PATH")
+DOCKERFILE_NAME=$(basename "$DOCKERFILE_PATH")
+
+echo "Resolved build context: $BUILD_CONTEXT"
+echo "Dockerfile name: $DOCKERFILE_NAME"
+
 
 # Set image and container names
 IMAGE_NAME="initramfs"
@@ -65,9 +86,9 @@ if docker ps -a | grep -q "$CONTAINER_NAME"; then
     docker rm -f "$CONTAINER_NAME"
 fi
 
-# Build the Docker image using the provided Dockerfile path (relative to the script directory)
-echo "Building Docker image: $IMAGE_NAME"
-docker build -t "$IMAGE_NAME" -f "$SCRIPT_DIR/$1" "$SCRIPT_DIR"
+# Build the Docker image using the provided Dockerfile and context
+echo "Building Docker image: $IMAGE_NAME with context $BUILD_CONTEXT and Dockerfile $DOCKERFILE_NAME"
+docker build -t "$IMAGE_NAME" -f "$DOCKERFILE_PATH" "$BUILD_CONTEXT"
 
 # Create and start the container
 echo "Creating container: $CONTAINER_NAME"
