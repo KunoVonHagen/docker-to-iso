@@ -5,3 +5,4 @@ vmlinuz
 Dockerfile
 *.img
 initramfs.cpio.gz
+linux/
