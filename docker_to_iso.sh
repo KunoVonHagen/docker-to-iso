@@ -81,24 +81,19 @@ fi
 
 # Build kernel if option is set
 if [ "$BUILD_KERNEL" = true ]; then
-    echo "Building kernel..."
     execute_with_logging "Building kernel..." "./build_kernel.sh"
     echo "Kernel build completed."
 fi
 
 # Build initramfs
-echo "Building initramfs from Dockerfile..."
 execute_with_logging "Building initramfs from Dockerfile..." "./build_initramfs.sh \"$DOCKERFILE_PATH\""
 echo "Initramfs build completed."
 
 # Test initramfs file
-echo "Testing initramfs file..."
 execute_with_logging "Testing initramfs file..." "./test_initramfs_file.sh initramfs.cpio.gz"
 echo "Initramfs file test passed."
 
 # Build ISO
-echo "Building ISO..."
-echo "The ISO will be saved to '$ISO_OUTPUT_PATH'."
 if [ -n "$ISO_OUTPUT_PATH" ]; then
     execute_with_logging "Building ISO with output path '$ISO_OUTPUT_PATH'..." "./build_iso.sh \"$ISO_OUTPUT_PATH\" bzImage initramfs.cpio.gz"
 else
