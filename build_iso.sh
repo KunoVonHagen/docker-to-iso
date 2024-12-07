@@ -1,17 +1,55 @@
 #!/bin/bash
 
-# Check if correct number of arguments is passed
-if [ $# -ne 2 ]; then
-    echo "Usage: $0 <kernel> <initramfs.gpio.gz>"
+# Get the directory of the script
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+
+# Default output ISO file and directory
+ISO_OUTPUT="$SCRIPT_DIR/bootable.iso"
+OUTPUT_DIR="$SCRIPT_DIR/iso"
+
+# Function to display usage information
+usage() {
+    echo "Usage: $0 [-o output_iso_path] <kernel> <initramfs.gpio.gz>"
+    echo ""
+    echo "This script creates a bootable ISO with the provided kernel and initramfs."
+    echo ""
+    echo "Options:"
+    echo "  -o    Specify the output ISO path (default: bootable.iso)"
+    echo "  -h, --help   Display this help message"
+    echo ""
+    echo "Arguments:"
+    echo "  <kernel>       Path to the kernel file."
+    echo "  <initramfs.gz> Path to the initramfs file."
     exit 1
+}
+
+# Parse the command-line options
+while getopts "o:h-:" opt; do
+  case $opt in
+    o)
+      # Split the output option into directory and file name
+      ISO_OUTPUT="$OPTARG"
+      OUTPUT_DIR=$(dirname "$ISO_OUTPUT")
+      ;;
+    h|?|-h|--help)
+      usage
+      ;;
+    *)
+      usage
+      ;;
+  esac
+done
+
+# Check if correct number of arguments is passed
+shift $((OPTIND - 1))
+if [ $# -ne 2 ]; then
+    usage
 fi
 
 KERNEL=$1
 INITRAMFS=$2
-OUTPUT_DIR="iso"
 GRUB_DIR="$OUTPUT_DIR/boot/grub"
 MOUNT_DIR="$OUTPUT_DIR/mnt"
-ISO_OUTPUT="bootable.iso"
 
 # Make sure necessary directories exist
 echo "Creating necessary directories..."
@@ -33,7 +71,7 @@ set default=0
 set timeout=5
 
 menuentry "Custom Linux" {
-	echo "Loading kernel..." 
+    echo "Loading kernel..." 
     linux /boot/vmlinuz root=/dev/ram0 rw
     
     echo "Loading initramfs..."

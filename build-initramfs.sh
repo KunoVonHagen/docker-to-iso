@@ -3,7 +3,41 @@
 # Get the script's directory
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 
+# Default output file name
+OUTPUT_FILE="$SCRIPT_DIR/initramfs.cpio.gz"
+
+# Display the help message
+show_help() {
+  echo "Usage: $0 [-o output_file] <Dockerfile>"
+  echo
+  echo "This script builds a Docker image from the provided Dockerfile, exports the container's"
+  echo "filesystem, and packages it into a compressed initramfs (initrd) image."
+  echo
+  echo "Options:"
+  echo "  -o <output_file>  Specify the output file name for the initramfs (default: initramfs.cpio.gz)"
+  echo "  -h, --help         Display this help message"
+  echo
+}
+
+# Parse the command-line options
+while getopts "o:h-:" opt; do
+  case $opt in
+    o)
+      OUTPUT_FILE="$OPTARG"
+      ;;
+    h|help)
+      show_help
+      exit 0
+      ;;
+    *)
+      echo "Usage: $0 [-o output_file] <Dockerfile>"
+      exit 1
+      ;;
+  esac
+done
+
 # Check if the Dockerfile path is provided as an argument
+shift $((OPTIND - 1))
 if [ -z "$1" ]; then
     echo "Please provide the path to the Dockerfile."
     exit 1
@@ -166,11 +200,11 @@ echo "Init script made executable."
 echo "Packaging the filesystem into initrd image..."
 # Package the filesystem into an initrd image (cpio.gz format)
 cd "$WORK_DIR/$ROOT_DIR"
-find . -print0 | cpio --null -ov --format=newc | gzip -9 > "$SCRIPT_DIR/initramfs.cpio.gz"
+find . -print0 | cpio --null -ov --format=newc | gzip -9 > "$OUTPUT_FILE"
 cd "$SCRIPT_DIR"
 
 # Clean up the working directory
 rm -rf "$WORK_DIR"
 echo "Cleaned up the working directory."
 
-echo "initramfs.cpio.gz is ready!"
+echo "$OUTPUT_FILE is ready!"

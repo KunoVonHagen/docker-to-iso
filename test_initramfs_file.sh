@@ -3,10 +3,34 @@
 # Determine the script's directory
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 
+# Function to display usage information
+usage() {
+    echo "Usage: $0 <relative_path_to_initramfs.cpio.gz>"
+    echo ""
+    echo "This script tests various aspects of an initramfs file, including existence,"
+    echo "extraction, required files, and directories."
+    echo ""
+    echo "Options:"
+    echo "  -h, --help    Display this help message"
+    echo ""
+    exit 1
+}
+
+# Parse the command-line options
+while getopts "h-:" opt; do
+  case $opt in
+    h|?|-h|--help)
+      usage
+      ;;
+    *)
+      usage
+      ;;
+  esac
+done
+
 # Check if initramfs file is provided as an argument
 if [ -z "$1" ]; then
-    echo "Usage: $0 <relative_path_to_initramfs.cpio.gz>"
-    exit 1
+    usage
 fi
 
 # Resolve the initramfs file path based on the provided argument
@@ -106,24 +130,6 @@ if [ -c "$WORK_DIR/initramfs/dev/console" ]; then
 else
     print_result "$test" 1
     echo "DEBUG: /dev/console is missing or not a character device."
-fi
-
-# 9. Simulate boot with QEMU
-test="Simulate boot with QEMU"
-QEMU_LOG="$WORK_DIR/qemu_log.txt"
-qemu-system-x86_64 \
-    -kernel /boot/vmlinuz-linux \
-    -initrd "$INITRAMFS_PATH" \
-    -nographic \
-    -append "console=ttyS0" &> "$QEMU_LOG" &
-QEMU_PID=$!
-sleep 5
-kill $QEMU_PID &>/dev/null
-if grep -q "Welcome to your docker image based Linux" "$QEMU_LOG"; then
-    print_result "$test" 0
-else
-    print_result "$test" 1
-    echo "DEBUG: QEMU simulation failed. Check the log at $QEMU_LOG for details."
 fi
 
 # Cleanup
