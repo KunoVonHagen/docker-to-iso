@@ -72,7 +72,7 @@ set timeout=5
 
 menuentry "Custom Linux" {
     echo "Loading kernel..." 
-    linux /boot/vmlinuz root=/dev/ram0 rw
+    linux /boot/vmlinuz root=/dev/ram0 rw console=tty0 console=ttyS0,115200
     
     echo "Loading initramfs..."
     initrd /boot/initramfs.gz

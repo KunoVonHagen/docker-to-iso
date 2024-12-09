@@ -2,3 +2,4 @@ bootable.iso
 *.img
 initramfs.cpio.gz
 linux/
+busybox/

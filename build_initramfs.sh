@@ -15,7 +15,7 @@ show_help() {
   echo
   echo "Options:"
   echo "  -o <output_file>  Specify the output file name for the initramfs (default: initramfs.cpio.gz)"
-  echo "  -h, --help         Display this help message"
+  echo "  -h, --help        Display this help message"
   echo
   echo "The <Dockerfile_path> argument must include the build context as a parent directory."
   echo "Example: ./mycontext/Dockerfile"
@@ -63,7 +63,6 @@ DOCKERFILE_NAME=$(basename "$DOCKERFILE_PATH")
 echo "Resolved build context: $BUILD_CONTEXT"
 echo "Dockerfile name: $DOCKERFILE_NAME"
 
-
 # Set image and container names
 IMAGE_NAME="initramfs"
 CONTAINER_NAME="$IMAGE_NAME-container"
@@ -109,123 +108,115 @@ mkdir -p "$WORK_DIR/$ROOT_DIR"
 cp -r "$WORK_DIR/$FS_DIR"/* "$WORK_DIR/$ROOT_DIR/"
 
 # Create necessary folders (proc, sys)
-echo "Creating necessary folders (proc, sys)..."
+echo "Creating necessary folders (proc, sys, tmp, dev)..."
 mkdir -p "$WORK_DIR/$ROOT_DIR/proc" "$WORK_DIR/$ROOT_DIR/sys"
-mkdir -p "$WORK_DIR/$ROOT_DIR/tmp"  # Ensure /tmp exists
+mkdir -p "$WORK_DIR/$ROOT_DIR/tmp" "$WORK_DIR/$ROOT_DIR/dev"
 
-# Remove /dev/console if it exists as a regular file, then recreate it inside chroot
-echo "Checking if /dev/console exists inside chroot..."
-chroot "$WORK_DIR/$ROOT_DIR" bash -c "
-    if [ -e /dev/console ]; then
-        echo '/dev/console exists, removing it...'
-        rm -f /dev/console
+# Create device nodes outside of chroot for robustness
+echo "Creating device nodes..."
+
+# Helper function to create device nodes safely
+create_device_node() {
+  local path="$1"
+  local type="$2"
+  local major="$3"
+  local minor="$4"
+
+  if [ -e "$path" ]; then
+    if [ ! -c "$path" ]; then
+      echo "Removing non-character device file: $path"
+      rm -f "$path"
+    else
+      echo "Device node already exists: $path"
+      return
     fi
-    echo 'Creating /dev/console device node inside chroot...'
-    mknod /dev/console c 5 1
-    chmod 600 /dev/console
-"
+  fi
 
-# Check if the device was created correctly
-if [ -c "$WORK_DIR/$ROOT_DIR/dev/console" ]; then
-    echo "/dev/console created successfully."
-else
-    echo "/dev/console creation failed."
+  echo "Creating device node: $path"
+  mknod -m 666 "$path" "$type" "$major" "$minor"
+}
+
+# Create console, null, and tty device nodes
+create_device_node "$WORK_DIR/$ROOT_DIR/dev/console" c 5 1
+create_device_node "$WORK_DIR/$ROOT_DIR/dev/null" c 1 3
+create_device_node "$WORK_DIR/$ROOT_DIR/dev/tty" c 5 0
+
+# Verify device nodes were created
+if [ ! -c "$WORK_DIR/$ROOT_DIR/dev/console" ] || \
+   [ ! -c "$WORK_DIR/$ROOT_DIR/dev/null" ] || \
+   [ ! -c "$WORK_DIR/$ROOT_DIR/dev/tty" ]; then
+    echo "Error: Failed to create necessary device nodes."
     exit 1
 fi
-
-# Backup the original resolv.conf if it exists inside the chroot
-if [ -f "$WORK_DIR/$ROOT_DIR/etc/resolv.conf" ]; then
-    echo "Backing up existing resolv.conf in chroot..."
-    cp "$WORK_DIR/$ROOT_DIR/etc/resolv.conf" "$WORK_DIR/$ROOT_DIR/etc/resolv.conf.bak"
-fi
-
-# Copy the host's resolv.conf into the chroot environment
-echo "Copying host's resolv.conf to chroot environment..."
-cp /etc/resolv.conf "$WORK_DIR/$ROOT_DIR/etc/resolv.conf"
-
-echo "Creating missing /tmp directory inside chroot..."
-# Ensure /tmp exists in the chroot environment and has the correct permissions
-mkdir -p "$WORK_DIR/$ROOT_DIR/tmp"
-chmod 1777 "$WORK_DIR/$ROOT_DIR/tmp"
-
-# Mount host directories to provide missing dependencies
-echo "Mounting host directories to provide missing dependencies..."
-mount --bind /dev "$WORK_DIR/$ROOT_DIR/dev"
-mount --bind /sys "$WORK_DIR/$ROOT_DIR/sys"
-mount --bind /proc "$WORK_DIR/$ROOT_DIR/proc"
-mount --bind /tmp "$WORK_DIR/$ROOT_DIR/tmp"
-
-# Install wget and gnupg inside chroot
-echo "Installing wget and gnupg inside chroot..."
-chroot "$WORK_DIR/$ROOT_DIR" /bin/bash <<'EOF'
-apt-get update
-apt-get install -y wget gnupg
-EOF
-
-echo "Importing GPG keys inside the chroot..."
-# Import the GPG key for the Debian repositories
-chroot "$WORK_DIR/$ROOT_DIR" /bin/bash <<'EOF'
-wget -qO- https://ftp-master.debian.org/keys/archive-key-11.asc | apt-key add -
-EOF
-
-echo "Updating apt in the chroot environment..."
-# Try updating apt in the chroot environment with logging
-chroot "$WORK_DIR/$ROOT_DIR" /bin/bash <<EOF
-export DEBIAN_FRONTEND=noninteractive
-
-echo "Starting apt-get update..."
-apt-get update || echo "Warning: apt update failed"
-
-# Install required packages
-apt-get install -y debootstrap initramfs-tools busybox mount || echo "Warning: apt-get install failed"
-EOF
-
-# Restore the original resolv.conf inside the chroot, if it was backed up
-if [ -f "$WORK_DIR/$ROOT_DIR/etc/resolv.conf.bak" ]; then
-    echo "Restoring original resolv.conf in chroot..."
-    mv "$WORK_DIR/$ROOT_DIR/etc/resolv.conf.bak" "$WORK_DIR/$ROOT_DIR/etc/resolv.conf"
-fi
-
-# Unmount host directories after installation
-echo "Unmounting host directories..."
-umount "$WORK_DIR/$ROOT_DIR/dev"
-umount "$WORK_DIR/$ROOT_DIR/sys"
-umount "$WORK_DIR/$ROOT_DIR/proc"
-umount "$WORK_DIR/$ROOT_DIR/tmp"
 
 # Add init script
 echo "Adding init script..."
 cat <<'EOF' > "$WORK_DIR/$ROOT_DIR/init"
-#!/bin/sh
+#!/bin/busybox
 
-echo "Starting the init script" > /dev/ttyS0
+# Print a message to the console for debugging
+echo "Starting the init script" > /dev/console
 
+# Mount necessary filesystems
 mount -t proc none /proc
 mount -t sysfs none /sys
+mount -t devtmpfs none /dev
 
-cat <<!
+# Ensure /tmp exists and is writable
+mkdir -p /tmp
+chmod 1777 /tmp
 
-Boot took $(cut -d' ' -f1 /proc/uptime) seconds
+# Inform the user about successful initialization
+echo "Initialization complete!" > /dev/console
+echo "Boot took $(cut -d' ' -f1 /proc/uptime) seconds" > /dev/console
 
-Welcome to your docker image based Linux.
-
-!
-
-exec /bin/sh
+# Launch a shell for user interaction using busybox
+exec /bin/busybox < /dev/console > /dev/console 2>&1
+exec /bin/busybox < /dev/tty0 > /dev/tty0 2>&1
+exec /bin/busybox < /dev/ttyS0 > /dev/ttyS0 2>&1
 EOF
 
 # Make the init script executable
 chmod +x "$WORK_DIR/$ROOT_DIR/init"
 echo "Init script made executable."
 
+# Copy busybox from the host system to the initramfs
+echo "Copying busybox to initramfs..."
+cp "$SCRIPT_DIR/busybox" "$WORK_DIR/$ROOT_DIR/bin/busybox"
+
+# Copy the required libraries for busybox
+echo "Copying required libraries for busybox..."
+mkdir -p "$WORK_DIR/$ROOT_DIR/lib"
+mkdir -p "$WORK_DIR/$ROOT_DIR/lib64"
+
+# Copy libc and other required libraries
+for lib in $(ldd /bin/busybox | grep -o '/lib[^ ]*'); do
+  cp -v "$lib" "$WORK_DIR/$ROOT_DIR${lib}"
+done
+
+# Create symlinks for the dynamic linker
+echo "Creating symlinks for dynamic linker..."
+ln -s /lib/$(uname -m)-linux-gnu/ld-*.so "$WORK_DIR/$ROOT_DIR/lib/ld-linux.so.2"
+
 echo "Packaging the filesystem into initrd image..."
 # Package the filesystem into an initrd image (cpio.gz format)
 cd "$WORK_DIR/$ROOT_DIR"
 find . -print0 | cpio --null -ov --format=newc | gzip -9 > "$OUTPUT_FILE"
+if [ $? -eq 0 ]; then
+    echo "Initrd successfully created: $OUTPUT_FILE"
+else
+    echo "Error: Failed to create initrd image."
+    exit 1
+fi
 cd "$SCRIPT_DIR"
 
 # Clean up the working directory
-rm -rf "$WORK_DIR"
-echo "Cleaned up the working directory."
+#echo "Cleaning up the working directory..."
+#rm -rf "$WORK_DIR"
+#if [ $? -eq 0 ]; then
+#    echo "Working directory cleaned up successfully."
+#else
+#    echo "Warning: Failed to clean up the working directory."
+#fi
 
 echo "$OUTPUT_FILE is ready!"

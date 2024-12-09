@@ -6,6 +6,9 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Get the directory of the script to handle relative paths
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+
 # Log file
 LOG_FILE="/tmp/bootable_iso_build.log"
 
@@ -18,7 +21,8 @@ show_help() {
     echo "Options:"
     echo "  <Dockerfile_path>        Path to the Dockerfile"
     echo "  -o <ISO_output_path>     Optional path to output the ISO (default: bootable.iso)"
-    echo "  --build-kernel           Optional flag to build the kernel"
+    echo "  --build-kernel           Build the kernel"
+    echo "  --build-busybox          Build BusyBox"
     echo "  -h, --help               Show this help message"
     exit 0
 }
@@ -39,12 +43,17 @@ execute_with_logging() {
 
 # Parse options
 BUILD_KERNEL=false
+BUILD_BUSYBOX=false
 
 # First, check for flags
 while [[ $# -gt 0 ]]; do
     case $1 in
         --build-kernel)
             BUILD_KERNEL=true
+            shift
+            ;;
+        --build-busybox)
+            BUILD_BUSYBOX=true
             shift
             ;;
         -o)
@@ -78,25 +87,41 @@ if [ ! -f "$DOCKERFILE_PATH" ]; then
     exit 1
 fi
 
-# Build kernel if option is set
+# Build kernel if option is set or kernel is missing
 if [ "$BUILD_KERNEL" = true ]; then
-    execute_with_logging "Building kernel..." "./build_kernel.sh"
+    execute_with_logging "Building kernel..." "$SCRIPT_DIR/build_kernel.sh"
     echo "Kernel build completed."
 fi
 
+if [ ! -f "bzImage" ]; then
+	echo "Error: Kernel file 'bzImage' not found. Use --build-kernel to build it."
+	exit 1
+fi
+
+# Build BusyBox if option is set or BusyBox executable is missing
+if [ "$BUILD_BUSYBOX" = true ]; then
+    execute_with_logging "Building BusyBox..." "$SCRIPT_DIR/build_busybox.sh"
+    echo "BusyBox build completed."
+fi
+
+if [ ! -f "busybox" ]; then
+    echo "Error: BusyBox executable not found. Use --build-busybox to build it."
+    exit 1
+fi
+
 # Build initramfs
-execute_with_logging "Building initramfs from Dockerfile..." "./build_initramfs.sh $DOCKERFILE_PATH"
+execute_with_logging "Building initramfs from Dockerfile..." "$SCRIPT_DIR/build_initramfs.sh $DOCKERFILE_PATH"
 echo "Initramfs build completed."
 
 # Test initramfs file
-execute_with_logging "Testing initramfs file..." "./test_initramfs_file.sh initramfs.cpio.gz"
+execute_with_logging "Testing initramfs file..." "$SCRIPT_DIR/test_initramfs_file.sh initramfs.cpio.gz"
 echo "Initramfs file test passed."
 
 # Build ISO
 if [ -n "$ISO_OUTPUT_PATH" ]; then
-    execute_with_logging "Building ISO with output path '$ISO_OUTPUT_PATH'..." "./build_iso.sh -o $ISO_OUTPUT_PATH bzImage initramfs.cpio.gz"
+    execute_with_logging "Building ISO with output path '$ISO_OUTPUT_PATH'..." "$SCRIPT_DIR/build_iso.sh -o $ISO_OUTPUT_PATH bzImage initramfs.cpio.gz"
 else
     ISO_OUTPUT_PATH="$(pwd)/bootable.iso"
-    execute_with_logging "Building ISO with default output path 'bootable.iso'..." "./build_iso.sh bzImage initramfs.cpio.gz"
+    execute_with_logging "Building ISO with default output path 'bootable.iso'..." "$SCRIPT_DIR/build_iso.sh bzImage initramfs.cpio.gz"
 fi
 echo "ISO build completed. Output saved to '$ISO_OUTPUT_PATH'."
