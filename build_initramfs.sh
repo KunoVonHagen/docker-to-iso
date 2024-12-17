@@ -152,51 +152,32 @@ fi
 # Add init script
 echo "Adding init script..."
 cat <<'EOF' > "$WORK_DIR/$ROOT_DIR/init"
-#!/bin/busybox
+#!/bin/sh
 
-# Print a message to the console for debugging
+set -x
+
 echo "Starting the init script" > /dev/console
 
-# Mount necessary filesystems
-mount -t proc none /proc
-mount -t sysfs none /sys
-mount -t devtmpfs none /dev
+# Mount filesystems
+mount -t proc none /proc || echo "Failed to mount /proc" > /dev/console
+mount -t sysfs none /sys || echo "Failed to mount /sys" > /dev/console
+mount -t devtmpfs none /dev || echo "Failed to mount /dev" > /dev/console
 
-# Ensure /tmp exists and is writable
-mkdir -p /tmp
-chmod 1777 /tmp
+# Check required directories
+mkdir -p /tmp || echo "Failed to create /tmp" > /dev/console
+chmod 1777 /tmp || echo "Failed to chmod /tmp" > /dev/console
 
 # Inform the user about successful initialization
 echo "Initialization complete!" > /dev/console
 echo "Boot took $(cut -d' ' -f1 /proc/uptime) seconds" > /dev/console
 
-# Launch a shell for user interaction using busybox
-exec /bin/busybox < /dev/console > /dev/console 2>&1
-exec /bin/busybox < /dev/tty0 > /dev/tty0 2>&1
-exec /bin/busybox < /dev/ttyS0 > /dev/ttyS0 2>&1
+# Launch a shell for user interaction
+exec /bin/sh < /dev/console > /dev/console 2>&1
 EOF
 
 # Make the init script executable
 chmod +x "$WORK_DIR/$ROOT_DIR/init"
 echo "Init script made executable."
-
-# Copy busybox from the host system to the initramfs
-echo "Copying busybox to initramfs..."
-cp "$SCRIPT_DIR/busybox" "$WORK_DIR/$ROOT_DIR/bin/busybox"
-
-# Copy the required libraries for busybox
-echo "Copying required libraries for busybox..."
-mkdir -p "$WORK_DIR/$ROOT_DIR/lib"
-mkdir -p "$WORK_DIR/$ROOT_DIR/lib64"
-
-# Copy libc and other required libraries
-for lib in $(ldd /bin/busybox | grep -o '/lib[^ ]*'); do
-  cp -v "$lib" "$WORK_DIR/$ROOT_DIR${lib}"
-done
-
-# Create symlinks for the dynamic linker
-echo "Creating symlinks for dynamic linker..."
-ln -s /lib/$(uname -m)-linux-gnu/ld-*.so "$WORK_DIR/$ROOT_DIR/lib/ld-linux.so.2"
 
 echo "Packaging the filesystem into initrd image..."
 # Package the filesystem into an initrd image (cpio.gz format)

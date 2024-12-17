@@ -3,3 +3,4 @@ bootable.iso
 initramfs.cpio.gz
 linux/
 busybox/
+initramfs-workdir/

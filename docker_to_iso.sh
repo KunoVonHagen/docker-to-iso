@@ -22,7 +22,6 @@ show_help() {
     echo "  <Dockerfile_path>        Path to the Dockerfile"
     echo "  -o <ISO_output_path>     Optional path to output the ISO (default: bootable.iso)"
     echo "  --build-kernel           Build the kernel"
-    echo "  --build-busybox          Build BusyBox"
     echo "  -h, --help               Show this help message"
     exit 0
 }
@@ -43,17 +42,12 @@ execute_with_logging() {
 
 # Parse options
 BUILD_KERNEL=false
-BUILD_BUSYBOX=false
 
 # First, check for flags
 while [[ $# -gt 0 ]]; do
     case $1 in
         --build-kernel)
             BUILD_KERNEL=true
-            shift
-            ;;
-        --build-busybox)
-            BUILD_BUSYBOX=true
             shift
             ;;
         -o)
@@ -96,17 +90,6 @@ fi
 if [ ! -f "bzImage" ]; then
 	echo "Error: Kernel file 'bzImage' not found. Use --build-kernel to build it."
 	exit 1
-fi
-
-# Build BusyBox if option is set or BusyBox executable is missing
-if [ "$BUILD_BUSYBOX" = true ]; then
-    execute_with_logging "Building BusyBox..." "$SCRIPT_DIR/build_busybox.sh"
-    echo "BusyBox build completed."
-fi
-
-if [ ! -f "busybox" ]; then
-    echo "Error: BusyBox executable not found. Use --build-busybox to build it."
-    exit 1
 fi
 
 # Build initramfs

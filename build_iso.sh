@@ -70,9 +70,9 @@ cat > $GRUB_DIR/grub.cfg <<EOF
 set default=0
 set timeout=5
 
-menuentry "Custom Linux" {
-    echo "Loading kernel..." 
-    linux /boot/vmlinuz root=/dev/ram0 rw console=tty0 console=ttyS0,115200
+menuentry "Custom Linux Debug" {
+    echo "Loading kernel..."
+    linux /boot/vmlinuz rw console=tty0
     
     echo "Loading initramfs..."
     initrd /boot/initramfs.gz
