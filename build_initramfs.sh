@@ -5,6 +5,7 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 
 # Default output file name
 OUTPUT_FILE="$SCRIPT_DIR/initramfs.cpio.gz"
+MOUNT_POINTS=() # To track mounted filesystems
 
 # Display the help message
 show_help() {
@@ -17,10 +18,34 @@ show_help() {
   echo "  -o <output_file>  Specify the output file name for the initramfs (default: initramfs.cpio.gz)"
   echo "  -h, --help        Display this help message"
   echo
-  echo "The <Dockerfile_path> argument must include the build context as a parent directory."
+  echo "The <Dockerfile_path> argument must specify the respective parent directory as the build context."
   echo "Example: ./mycontext/Dockerfile"
   echo
 }
+
+# Cleanup function to unmount and clean up resources
+cleanup() {
+  echo "Cleanup: Restoring system state..."
+
+  # Unmount any mounted filesystems
+  for mp in "${MOUNT_POINTS[@]}"; do
+    if mountpoint -q "$mp"; then
+      echo "Unmounting $mp..."
+      umount "$mp" || echo "Failed to unmount $mp"
+    fi
+  done
+
+  # Remove Docker container if it exists
+  if docker ps -a | grep -q "$CONTAINER_NAME"; then
+    echo "Removing Docker container: $CONTAINER_NAME..."
+    docker rm -f "$CONTAINER_NAME"
+  fi
+
+  echo "Cleanup completed."
+}
+
+# Trap signals and exit to invoke cleanup
+trap cleanup EXIT INT TERM
 
 # Parse the command-line options
 while getopts "o:h-:" opt; do
@@ -70,10 +95,11 @@ FS_DIR="$IMAGE_NAME-fs"
 ROOT_DIR="root"
 WORK_DIR="$IMAGE_NAME-workdir"
 
-echo "Starting cleanup of previous work..."
-
-# Clean up the working directory
-rm -rf "$WORK_DIR"
+# Clear the working directory at the beginning
+if [ -d "$WORK_DIR" ]; then
+  echo "Cleaning up existing working directory: $WORK_DIR"
+  rm -rf "$WORK_DIR"
+fi
 
 # Create a working directory to store intermediate files
 mkdir -p "$WORK_DIR"
@@ -89,69 +115,47 @@ fi
 echo "Building Docker image: $IMAGE_NAME with context $BUILD_CONTEXT and Dockerfile $DOCKERFILE_NAME"
 docker build -t "$IMAGE_NAME" -f "$DOCKERFILE_PATH" "$BUILD_CONTEXT"
 
+# Extract initial commands and user from the Dockerfile
+CMD_COMMAND=$(docker inspect --format='{{json .Config.Cmd}}' "$IMAGE_NAME" | jq -r 'join(" ")')
+ENTRYPOINT_COMMAND=$(docker inspect --format='{{json .Config.Entrypoint}}' "$IMAGE_NAME" | jq -r 'join(" ")')
+DEFAULT_USER=$(docker inspect --format='{{.Config.User}}' "$IMAGE_NAME")
+
+# Set defaults if no CMD or ENTRYPOINT is found
+if [ -z "$ENTRYPOINT_COMMAND" ]; then
+  RUN_COMMAND="$CMD_COMMAND"
+else
+  RUN_COMMAND="$ENTRYPOINT_COMMAND $CMD_COMMAND"
+fi
+
+if [ -z "$DEFAULT_USER" ]; then
+  DEFAULT_USER="root"
+fi
+
 # Create and start the container
 echo "Creating container: $CONTAINER_NAME"
 docker create --name "$CONTAINER_NAME" "$IMAGE_NAME"
 
-echo "Exporting the filesystem of the container..."
 # Export the filesystem of the container
+echo "Exporting the filesystem of the container..."
 docker export "$CONTAINER_NAME" -o "$WORK_DIR/$IMAGE_NAME.tar"
 
-echo "Extracting the contents of the exported tarball..."
 # Extract the contents of the exported tarball
+echo "Extracting the contents of the exported tarball..."
 mkdir "$WORK_DIR/$FS_DIR"
 tar xf "$WORK_DIR/$IMAGE_NAME.tar" -C "$WORK_DIR/$FS_DIR"
 
-echo "Copying the filesystem to the root directory..."
 # Copy the filesystem to a 'root' directory
+echo "Copying the filesystem to the root directory..."
 mkdir -p "$WORK_DIR/$ROOT_DIR"
 cp -r "$WORK_DIR/$FS_DIR"/* "$WORK_DIR/$ROOT_DIR/"
 
-# Create necessary folders (proc, sys)
+# Create necessary folders (proc, sys, tmp, dev)
 echo "Creating necessary folders (proc, sys, tmp, dev)..."
-mkdir -p "$WORK_DIR/$ROOT_DIR/proc" "$WORK_DIR/$ROOT_DIR/sys"
-mkdir -p "$WORK_DIR/$ROOT_DIR/tmp" "$WORK_DIR/$ROOT_DIR/dev"
+mkdir -p "$WORK_DIR/$ROOT_DIR/proc" "$WORK_DIR/$ROOT_DIR/sys" "$WORK_DIR/$ROOT_DIR/tmp" "$WORK_DIR/$ROOT_DIR/dev"
 
-# Create device nodes outside of chroot for robustness
-echo "Creating device nodes..."
-
-# Helper function to create device nodes safely
-create_device_node() {
-  local path="$1"
-  local type="$2"
-  local major="$3"
-  local minor="$4"
-
-  if [ -e "$path" ]; then
-    if [ ! -c "$path" ]; then
-      echo "Removing non-character device file: $path"
-      rm -f "$path"
-    else
-      echo "Device node already exists: $path"
-      return
-    fi
-  fi
-
-  echo "Creating device node: $path"
-  mknod -m 666 "$path" "$type" "$major" "$minor"
-}
-
-# Create console, null, and tty device nodes
-create_device_node "$WORK_DIR/$ROOT_DIR/dev/console" c 5 1
-create_device_node "$WORK_DIR/$ROOT_DIR/dev/null" c 1 3
-create_device_node "$WORK_DIR/$ROOT_DIR/dev/tty" c 5 0
-
-# Verify device nodes were created
-if [ ! -c "$WORK_DIR/$ROOT_DIR/dev/console" ] || \
-   [ ! -c "$WORK_DIR/$ROOT_DIR/dev/null" ] || \
-   [ ! -c "$WORK_DIR/$ROOT_DIR/dev/tty" ]; then
-    echo "Error: Failed to create necessary device nodes."
-    exit 1
-fi
-
-# Add init script
-echo "Adding init script..."
-cat <<'EOF' > "$WORK_DIR/$ROOT_DIR/init"
+# Add init script to the root filesystem
+echo "Adding init script to the root filesystem..."
+cat << EOF > "$WORK_DIR/$ROOT_DIR/init"
 #!/bin/sh
 
 set -x
@@ -159,45 +163,50 @@ set -x
 echo "Starting the init script" > /dev/console
 
 # Mount filesystems
+echo "Mounting /proc..." > /dev/console
 mount -t proc none /proc || echo "Failed to mount /proc" > /dev/console
+
+echo "Mounting /sys..." > /dev/console
 mount -t sysfs none /sys || echo "Failed to mount /sys" > /dev/console
+
+echo "Mounting /dev..." > /dev/console
 mount -t devtmpfs none /dev || echo "Failed to mount /dev" > /dev/console
 
 # Check required directories
+echo "Creating /tmp..." > /dev/console
 mkdir -p /tmp || echo "Failed to create /tmp" > /dev/console
+
+echo "Setting permissions for /tmp..." > /dev/console
 chmod 1777 /tmp || echo "Failed to chmod /tmp" > /dev/console
 
-# Inform the user about successful initialization
-echo "Initialization complete!" > /dev/console
-echo "Boot took $(cut -d' ' -f1 /proc/uptime) seconds" > /dev/console
+# Debugging for command execution
+echo "Prepared to execute the initial command." > /dev/console
+echo "Default user: $DEFAULT_USER" > /dev/console
+echo "Run command: $RUN_COMMAND" > /dev/console
 
-# Launch a shell for user interaction
+# Switch to the specified user and execute the command
+if [ "$DEFAULT_USER" != "root" ]; then
+  echo "Switching to user: $DEFAULT_USER" > /dev/console
+  su -s /bin/sh "$DEFAULT_USER" -c "$RUN_COMMAND" < /dev/console > /dev/console 2>&1 &
+  EXIT_STATUS=$?
+  echo "Command exited with status $EXIT_STATUS" > /dev/console
+else
+  echo "Executing as root: $RUN_COMMAND" > /dev/console
+  $RUN_COMMAND < /dev/console > /dev/console 2>&1 &
+fi
+
+EXIT_STATUS=$?
+echo "Final command exited with status $EXIT_STATUS" > /dev/console
+
+# Keep the init script running to prevent kernel panic
+echo "Init script completed." > /dev/console
 exec /bin/sh < /dev/console > /dev/console 2>&1
 EOF
 
-# Make the init script executable
 chmod +x "$WORK_DIR/$ROOT_DIR/init"
-echo "Init script made executable."
 
-echo "Packaging the filesystem into initrd image..."
-# Package the filesystem into an initrd image (cpio.gz format)
-cd "$WORK_DIR/$ROOT_DIR"
-find . -print0 | cpio --null -ov --format=newc | gzip -9 > "$OUTPUT_FILE"
-if [ $? -eq 0 ]; then
-    echo "Initrd successfully created: $OUTPUT_FILE"
-else
-    echo "Error: Failed to create initrd image."
-    exit 1
-fi
-cd "$SCRIPT_DIR"
+# Package the root filesystem into a compressed initramfs
+echo "Packaging the filesystem into an initramfs archive..."
+(cd "$WORK_DIR/$ROOT_DIR" && find . | cpio -H newc -o | gzip > "$OUTPUT_FILE")
 
-# Clean up the working directory
-#echo "Cleaning up the working directory..."
-#rm -rf "$WORK_DIR"
-#if [ $? -eq 0 ]; then
-#    echo "Working directory cleaned up successfully."
-#else
-#    echo "Warning: Failed to clean up the working directory."
-#fi
-
-echo "$OUTPUT_FILE is ready!"
+echo "Initramfs archive created at $OUTPUT_FILE"

@@ -72,7 +72,7 @@ set timeout=5
 
 menuentry "Custom Linux Debug" {
     echo "Loading kernel..."
-    linux /boot/vmlinuz rw console=tty0
+    linux /boot/vmlinuz rw console=ttyS0,16550 console=tty0
     
     echo "Loading initramfs..."
     initrd /boot/initramfs.gz

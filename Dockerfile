@@ -1,8 +1,20 @@
-# Use the Debian base image
-FROM debian:bullseye
+FROM alpine:latest
 
-# Create a text file in /root with the content "hello"
-RUN echo "hello" > /root/hello.txt
+RUN apk add --no-cache bash
 
-# Default command to keep the container running
-CMD ["tail", "-f", "/dev/null"]
+RUN adduser -D testuser && \
+    mkdir -p /home/testuser && \
+    chown -R testuser:testuser /home/testuser
+
+USER $USERNAME
+WORKDIR /home/testuser
+
+RUN echo '#!/bin/bash' > log_time.sh && \
+    echo 'while true; do' >> log_time.sh && \
+    echo '  date > /home/testuser/logfile.log' >> log_time.sh && \
+    echo '  sleep 5' >> log_time.sh && \
+    echo 'done' >> log_time.sh && \
+    chmod +x log_time.sh
+
+
+CMD ["bash", "-c", "/home/testuser/log_time.sh"]
